@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Management.Automation;
 using System.Linq;
 using System.Management.Automation.Runspaces;
@@ -14,6 +15,13 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
     /// </summary>
     internal class CommandInfoCache : IDisposable
     {
+        /// <summary>
+        /// Number of times a command lookup is attempted before giving up.
+        /// Command lookups can fail transiently because the PowerShell engine is not thread safe,
+        /// see https://github.com/PowerShell/PowerShell/issues/4003
+        /// </summary>
+        private const int MaxLookupAttempts = 3;
+
         private readonly ConcurrentDictionary<CommandLookupKey, Lazy<CommandInfo>> _commandInfoCache;
         private readonly RunspacePool _runspacePool;
         private bool disposed = false;
@@ -70,7 +78,21 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
                 return GetCommandInfoInternal(commandName, commandTypes);
             }
             // Atomically either use PowerShell to query a command info object, or fetch it from the cache
-            return _commandInfoCache.GetOrAdd(key, new Lazy<CommandInfo>(() => GetCommandInfoInternal(commandName, commandTypes))).Value;
+            var lazyCommandInfo = _commandInfoCache.GetOrAdd(key, new Lazy<CommandInfo>(() => GetCommandInfoInternal(commandName, commandTypes)));
+            try
+            {
+                return lazyCommandInfo.Value;
+            }
+            catch
+            {
+                // Lazy<T> caches exceptions forever, which would make every subsequent lookup of this
+                // command fail for the lifetime of the process. Evict the entry so that the next lookup
+                // can try again. Only remove the faulted instance so that a replacement that another
+                // thread may already have added is left alone.
+                ((ICollection<KeyValuePair<CommandLookupKey, Lazy<CommandInfo>>>)_commandInfoCache)
+                    .Remove(new KeyValuePair<CommandLookupKey, Lazy<CommandInfo>>(key, lazyCommandInfo));
+                throw;
+            }
         }
 
 
@@ -99,26 +121,46 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
             // For more details see https://github.com/PowerShell/PowerShell/issues/9308
             actualCmdName = WildcardPattern.Escape(actualCmdName);
 
-            using (var ps = System.Management.Automation.PowerShell.Create())
+            for (int attempt = 1; ; attempt++)
             {
-                ps.RunspacePool = _runspacePool;
-
-                ps.AddCommand("Get-Command")
-                    .AddParameter("Name", actualCmdName)
-                    .AddParameter("ErrorAction", "SilentlyContinue");
-
-                if (commandType != null)
+                using (var ps = System.Management.Automation.PowerShell.Create())
                 {
-                    ps.AddParameter("CommandType", commandType);
-                }
+                    ps.RunspacePool = _runspacePool;
 
-                if (!string.IsNullOrEmpty(moduleName))
-                {
-                    ps.AddParameter("Module", moduleName);
-                }
+                    ps.AddCommand("Get-Command")
+                        .AddParameter("Name", actualCmdName)
+                        .AddParameter("ErrorAction", "SilentlyContinue");
 
-                return ps.Invoke<CommandInfo>()
-                    .FirstOrDefault();
+                    if (commandType != null)
+                    {
+                        ps.AddParameter("CommandType", commandType);
+                    }
+
+                    if (!string.IsNullOrEmpty(moduleName))
+                    {
+                        ps.AddParameter("Module", moduleName);
+                    }
+
+                    try
+                    {
+                        return ps.Invoke<CommandInfo>()
+                            .FirstOrDefault();
+                    }
+                    // 'Get-Command' is invoked with 'SilentlyContinue', so a CommandNotFoundException can only
+                    // mean that the engine failed to resolve 'Get-Command' itself in the pooled runspace.
+                    // That happens intermittently because the PowerShell engine is not thread safe, see
+                    // https://github.com/PowerShell/PowerShell/issues/4003 and
+                    // https://github.com/PowerShell/PSScriptAnalyzer/issues/2205
+                    // Retrying usually succeeds, but rather than failing the whole analysis when it does not,
+                    // treat the command as unresolvable.
+                    catch (CommandNotFoundException)
+                    {
+                        if (attempt >= MaxLookupAttempts)
+                        {
+                            return null;
+                        }
+                    }
+                }
             }
         }
 
