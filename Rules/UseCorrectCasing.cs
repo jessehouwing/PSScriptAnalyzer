@@ -128,10 +128,17 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
                     // It's a known issue that objects from PowerShell can have a runspace affinity,
                     // therefore if that happens, we query a fresh object instead of using the cache.
                     // https://github.com/PowerShell/PowerShell/issues/4003
-                    catch (InvalidOperationException)
+                    // The affinity problem surfaces as an InvalidOperationException or as a
+                    // NullReferenceException, see https://github.com/PowerShell/PSScriptAnalyzer/issues/1708
+                    catch (Exception exception) when (exception is InvalidOperationException || exception is NullReferenceException)
                     {
-                        commandInfo = Helper.Instance.GetCommandInfo(commandName, bypassCache: true);
-                        availableParameters = commandInfo.Parameters;
+                        availableParameters = GetParametersFromFreshCommandInfo(commandName);
+                    }
+                    if (availableParameters is null)
+                    {
+                        // The parameters of this command cannot be determined reliably,
+                        // so skip the parameter casing check instead of failing the analysis.
+                        continue;
                     }
                     foreach (var commandParameterAst in commandParameterAsts)
                     {
@@ -158,6 +165,22 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
                         }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Queries a fresh <see cref="CommandInfo"/> object to work around the runspace affinity problem
+        /// of the PowerShell engine and returns its parameters, or null if they cannot be determined.
+        /// </summary>
+        private Dictionary<string, ParameterMetadata> GetParametersFromFreshCommandInfo(string commandName)
+        {
+            try
+            {
+                return Helper.Instance.GetCommandInfo(commandName, bypassCache: true)?.Parameters;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException || exception is NullReferenceException)
+            {
+                return null;
             }
         }
 

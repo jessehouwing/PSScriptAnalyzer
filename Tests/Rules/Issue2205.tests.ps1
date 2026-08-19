@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 Describe 'Issue 2205' {
-    It "reproduces the Linux recursive analysis failure" -Skip:(-not $IsLinux) {
+    It "does not fail the analysis when a command lookup hits the runspace affinity problem" -Skip:(-not $IsLinux) {
         $settingsPath = Join-Path $PSScriptRoot 'Issue2205/PSScriptAnalyzerSettings.psd1'
         $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
