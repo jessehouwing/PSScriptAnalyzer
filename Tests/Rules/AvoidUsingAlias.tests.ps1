@@ -53,10 +53,8 @@ gci -Path C:\
         It "does not fail looking up commands on Linux" -Skip:(-not $IsLinux) {
             $scriptDefinition = 'Write-Output "No alias for me"'
 
-            {
-                $diagnostics = Invoke-ScriptAnalyzer -ScriptDefinition $scriptDefinition -IncludeRule $violationName -ErrorAction Stop
-                $diagnostics.Count | Should -Be 0
-            } | Should -Not -Throw
+            $diagnostics = @(Invoke-ScriptAnalyzer -ScriptDefinition $scriptDefinition -IncludeRule $violationName -ErrorAction Stop)
+            $diagnostics.Count | Should -Be 0
         }
 
         It "should return no violation for assignment statement-like command in dsc configuration" -skip:($IsLinux -or $IsMacOS) {
