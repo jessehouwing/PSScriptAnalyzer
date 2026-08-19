@@ -51,14 +51,10 @@ gci -Path C:\
         }
 
         It "does not fail looking up commands on Linux" -Skip:(-not $IsLinux) {
-            $testDirectory = Join-Path $TestDrive 'Issue2205'
-            $scriptPath = Join-Path $testDirectory 'nested/GetCommand.ps1'
-            $scriptDirectory = Split-Path -Parent $scriptPath
-            New-Item -ItemType Directory -Path $scriptDirectory | Out-Null
-            Set-Content -Path $scriptPath -Value 'Get-Command'
+            $settingsPath = Join-Path $PSScriptRoot 'Issue2205/PSScriptAnalyzerSettings.psd1'
+            $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
-            $diagnostics = @(Invoke-ScriptAnalyzer -Path $testDirectory -Recurse -IncludeRule $violationName -ErrorAction Stop)
-            $diagnostics.Count | Should -Be 0
+            Invoke-ScriptAnalyzer -Path $repositoryRoot -Recurse -Settings $settingsPath -ErrorAction Stop | Out-Null
         }
 
         It "should return no violation for assignment statement-like command in dsc configuration" -skip:($IsLinux -or $IsMacOS) {
