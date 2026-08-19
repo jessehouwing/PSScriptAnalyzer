@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Management.Automation;
 using System.Linq;
 using System.Management.Automation.Runspaces;
@@ -86,8 +87,10 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
             {
                 // Lazy<T> caches exceptions forever, which would make every subsequent lookup of this
                 // command fail for the lifetime of the process. Evict the entry so that the next lookup
-                // can try again.
-                _commandInfoCache.TryRemove(key, out _);
+                // can try again. Only remove the faulted instance so that a replacement that another
+                // thread may already have added is left alone.
+                ((ICollection<KeyValuePair<CommandLookupKey, Lazy<CommandInfo>>>)_commandInfoCache)
+                    .Remove(new KeyValuePair<CommandLookupKey, Lazy<CommandInfo>>(key, lazyCommandInfo));
                 throw;
             }
         }
