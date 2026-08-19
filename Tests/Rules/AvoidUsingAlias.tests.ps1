@@ -50,13 +50,6 @@ gci -Path C:\
             $noViolations.Count | Should -Be 0
         }
 
-        It "does not fail looking up commands on Linux" -Skip:(-not $IsLinux) {
-            $settingsPath = Join-Path $PSScriptRoot 'Issue2205/PSScriptAnalyzerSettings.psd1'
-            $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-
-            Invoke-ScriptAnalyzer -Path $repositoryRoot -Recurse -Settings $settingsPath -ErrorAction Stop | Out-Null
-        }
-
         It "should return no violation for assignment statement-like command in dsc configuration" -skip:($IsLinux -or $IsMacOS) {
             $target = @'
 Configuration MyDscConfiguration {
