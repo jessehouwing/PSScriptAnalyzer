@@ -57,24 +57,23 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
 
         protected virtual void Dispose(bool disposing)
         {
-            if ( disposed )
+            // Always take the lock, also on the finalizer path, so that 'disposed' is never
+            // published without the runspace being disposed along with it and so that the runspace
+            // cannot be disposed while a lookup is in flight.
+            lock (_runspaceLock)
             {
-                return;
-            }
-
-            if ( disposing )
-            {
-                // Take the lock so that the runspace is not disposed while a lookup is in flight.
-                lock (_runspaceLock)
+                if ( disposed )
                 {
-                    disposed = true;
-                    _runspace.Dispose();
+                    return;
                 }
 
-                return;
-            }
+                disposed = true;
 
-            disposed = true;
+                if ( disposing )
+                {
+                    _runspace.Dispose();
+                }
+            }
         }
 
         /// <summary>
