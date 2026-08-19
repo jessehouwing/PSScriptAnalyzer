@@ -3,6 +3,11 @@
 
 Describe "Concurrent command lookups" {
     BeforeAll {
+        # Run the analyzer once so that the singleton Helper is created by the cmdlet. Touching
+        # Helper.Instance before that would install a helper without a command invocation context,
+        # which breaks every later analysis in this process.
+        $null = Invoke-ScriptAnalyzer -ScriptDefinition 'Get-Item -Path .'
+
         # The concurrency driver is written in C# so that the lookups really do run on separate
         # threads. Invoking a PowerShell script block on a thread pool thread would introduce
         # runspace affinity problems of its own and would not test the command info cache.
