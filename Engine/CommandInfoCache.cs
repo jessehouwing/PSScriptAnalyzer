@@ -23,7 +23,17 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
         private const int MaxLookupAttempts = 3;
 
         private readonly ConcurrentDictionary<CommandLookupKey, Lazy<CommandInfo>> _commandInfoCache;
-        private readonly RunspacePool _runspacePool;
+
+        /// <summary>
+        /// Guards all access to <see cref="_runspace"/> so that only one thread at a time drives the
+        /// PowerShell engine. The engine is not thread safe, so concurrent lookups can fail transiently,
+        /// see https://github.com/PowerShell/PowerShell/issues/4003.
+        /// A monitor is used rather than a semaphore because it is re-entrant, which avoids a deadlock
+        /// should a lookup ever end up calling back into the cache on the same thread.
+        /// </summary>
+        private readonly object _runspaceLock = new object();
+
+        private readonly Runspace _runspace;
         private bool disposed = false;
 
         /// <summary>
@@ -32,11 +42,13 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
         public CommandInfoCache()
         {
             _commandInfoCache = new ConcurrentDictionary<CommandLookupKey, Lazy<CommandInfo>>();
-            _runspacePool = RunspaceFactory.CreateRunspacePool(1, 10);
-            _runspacePool.Open();
+            // A single runspace rather than a pool: all lookups are serialized on it, so that the
+            // PowerShell engine is never driven concurrently.
+            _runspace = RunspaceFactory.CreateRunspace();
+            _runspace.Open();
         }
 
-        /// <summary>Dispose the runspace pool</summary>
+        /// <summary>Dispose the runspace</summary>
         public void Dispose()
         {
             Dispose(true);
@@ -45,17 +57,23 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
 
         protected virtual void Dispose(bool disposing)
         {
-            if ( disposed )
+            // Always take the lock, also on the finalizer path, so that 'disposed' is never
+            // published without the runspace being disposed along with it and so that the runspace
+            // cannot be disposed while a lookup is in flight.
+            lock (_runspaceLock)
             {
-                return;
-            }
+                if ( disposed )
+                {
+                    return;
+                }
 
-            if ( disposing )
-            {
-                _runspacePool.Dispose();
-            }
+                disposed = true;
 
-            disposed = true;
+                if ( disposing )
+                {
+                    _runspace.Dispose();
+                }
+            }
         }
 
         /// <summary>
@@ -123,41 +141,51 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
 
             for (int attempt = 1; ; attempt++)
             {
-                using (var ps = System.Management.Automation.PowerShell.Create())
+                // Serialize all use of the PowerShell engine. Only cache misses reach this point;
+                // lookups that are already cached are served without taking the lock.
+                lock (_runspaceLock)
                 {
-                    ps.RunspacePool = _runspacePool;
-
-                    ps.AddCommand("Get-Command")
-                        .AddParameter("Name", actualCmdName)
-                        .AddParameter("ErrorAction", "SilentlyContinue");
-
-                    if (commandType != null)
+                    if (disposed)
                     {
-                        ps.AddParameter("CommandType", commandType);
+                        return null;
                     }
 
-                    if (!string.IsNullOrEmpty(moduleName))
+                    using (var ps = System.Management.Automation.PowerShell.Create())
                     {
-                        ps.AddParameter("Module", moduleName);
-                    }
+                        ps.Runspace = _runspace;
 
-                    try
-                    {
-                        return ps.Invoke<CommandInfo>()
-                            .FirstOrDefault();
-                    }
-                    // 'Get-Command' is invoked with 'SilentlyContinue', so a CommandNotFoundException can only
-                    // mean that the engine failed to resolve 'Get-Command' itself in the pooled runspace.
-                    // That happens intermittently because the PowerShell engine is not thread safe, see
-                    // https://github.com/PowerShell/PowerShell/issues/4003 and
-                    // https://github.com/PowerShell/PSScriptAnalyzer/issues/2205
-                    // Retrying usually succeeds, but rather than failing the whole analysis when it does not,
-                    // treat the command as unresolvable.
-                    catch (CommandNotFoundException)
-                    {
-                        if (attempt >= MaxLookupAttempts)
+                        ps.AddCommand("Get-Command")
+                            .AddParameter("Name", actualCmdName)
+                            .AddParameter("ErrorAction", "SilentlyContinue");
+
+                        if (commandType != null)
                         {
-                            return null;
+                            ps.AddParameter("CommandType", commandType);
+                        }
+
+                        if (!string.IsNullOrEmpty(moduleName))
+                        {
+                            ps.AddParameter("Module", moduleName);
+                        }
+
+                        try
+                        {
+                            return ps.Invoke<CommandInfo>()
+                                .FirstOrDefault();
+                        }
+                        // 'Get-Command' is invoked with 'SilentlyContinue', so a CommandNotFoundException can only
+                        // mean that the engine failed to resolve 'Get-Command' itself in the runspace.
+                        // That happened intermittently when lookups ran concurrently because the PowerShell engine
+                        // is not thread safe, see https://github.com/PowerShell/PowerShell/issues/4003 and
+                        // https://github.com/PowerShell/PSScriptAnalyzer/issues/2205
+                        // Lookups are serialized now, so this should no longer occur, but the retry is kept as a
+                        // safety net for hosts that drive the engine from other threads at the same time.
+                        catch (CommandNotFoundException)
+                        {
+                            if (attempt >= MaxLookupAttempts)
+                            {
+                                return null;
+                            }
                         }
                     }
                 }
