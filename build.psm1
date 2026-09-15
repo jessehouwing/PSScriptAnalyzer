@@ -323,21 +323,37 @@ function Test-ScriptAnalyzer
             $savedModulePath = $env:PSModulePath
             $env:PSModulePath = "${testModulePath}{0}${env:PSModulePath}" -f [System.IO.Path]::PathSeparator
             $analyzerPsd1Path = Join-Path -Path $script:destinationDir -ChildPath "$analyzerName.psd1"
-            $scriptBlock = [scriptblock]::Create("Import-Module '$analyzerPsd1Path'; Invoke-Pester -Path $testScripts -CI")
+            # Keep the test command a string: passing a ScriptBlock to a child powershell.exe
+            # triggers Windows PowerShell's minishell mode, which streams CLIXML to stderr and
+            # fills the CI log with serialized XML.
+            $testCommand = "Import-Module '$analyzerPsd1Path'; Invoke-Pester -Path $testScripts -CI"
+            # powershell.exe does not understand --version and would spew a parser error plus a
+            # CLIXML-serialized error stream into the CI log, so ask for the version in-band.
+            $versionScript = '$PSVersionTable.PSVersion.ToString()'
             if ( $InProcess ) {
                 Write-Verbose "Testing with PowerShell $($PSVersionTable.PSVersion)"
-                & $scriptBlock
+                & ([scriptblock]::Create($testCommand))
             }
             elseif ( $WithPowerShell ) {
-                $pwshVersion = & $WithPowerShell --version
+                $pwshVersion = & $WithPowerShell -NoProfile -Command $versionScript
                 Write-Verbose "Testing with $pwshVersion"
-                & $WithPowerShell -Command $scriptBlock
+                & $WithPowerShell -Command $testCommand
             }
             else {
                 $powershell = (Get-Process -id $PID).MainModule.FileName
-                $pwshVersion = & $powershell --version
+                if ([System.IO.Path]::GetFileName($powershell) -eq 'powershell.exe') {
+                    # When Windows PowerShell is (transitively) started from pwsh, it inherits
+                    # pwsh's PSModulePath. The PowerShell 7 core module directories then shadow
+                    # the built-in Windows PowerShell modules (Microsoft.PowerShell.Utility and
+                    # friends), which breaks command auto-loading in the test run. Strip them.
+                    $env:PSModulePath = (
+                        $env:PSModulePath -split [System.IO.Path]::PathSeparator |
+                            Where-Object { $_ -notmatch '[\\/]PowerShell[\\/]([^\\/]+[\\/])?Modules[\\/]?$|[\\/]microsoft\.powershell_' }
+                    ) -join [System.IO.Path]::PathSeparator
+                }
+                $pwshVersion = & $powershell -NoProfile -Command $versionScript
                 Write-Verbose "Testing with $pwshVersion"
-                & $powershell -NoProfile -Command $scriptBlock
+                & $powershell -NoProfile -Command $testCommand
             }
         }
         finally {
