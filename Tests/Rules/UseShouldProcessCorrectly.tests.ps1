@@ -281,10 +281,16 @@ function Foo
     }
 
     Context "Method calls are not command calls" {
-        # 'mkdir' is one of the few hyphen-free commands that declares SupportsShouldProcess, so a
-        # member of the same name is the clearest way to tell a method call from a command call.
+        # Use a same-named helper function rather than a built-in command because Linux resolves
+        # 'mkdir' to /usr/bin/mkdir instead of the PowerShell alias.
         It "does not treat a method invocation as a call to the command of the same name" {
             $scriptDef = @'
+function mkdir
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($dir)
+}
+
 function Invoke-Thing
 {
     [CmdletBinding(SupportsShouldProcess)]
@@ -298,6 +304,12 @@ function Invoke-Thing
 
         It "still credits a real call to a command that supports ShouldProcess" {
             $scriptDef = @'
+function mkdir
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($dir)
+}
+
 function Invoke-Thing
 {
     [CmdletBinding(SupportsShouldProcess)]
@@ -310,6 +322,12 @@ function Invoke-Thing
 
         It "does not treat a static method invocation as a command call" {
             $scriptDef = @'
+function WriteAllText
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($path, $contents)
+}
+
 function Invoke-Thing
 {
     [CmdletBinding(SupportsShouldProcess)]
@@ -324,6 +342,12 @@ function Invoke-Thing
         # Graph vertices are keyed on name alone, so a name used as both must not depend on visit order.
         It "credits the command call when the method call comes first" {
             $scriptDef = @'
+function mkdir
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($dir)
+}
+
 function Invoke-Thing
 {
     [CmdletBinding(SupportsShouldProcess)]
@@ -337,6 +361,12 @@ function Invoke-Thing
 
         It "credits the command call when the command call comes first" {
             $scriptDef = @'
+function mkdir
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($dir)
+}
+
 function Invoke-Thing
 {
     [CmdletBinding(SupportsShouldProcess)]
