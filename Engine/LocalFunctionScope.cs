@@ -18,13 +18,16 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
 
         private readonly Dictionary<string, List<FunctionDefinitionAst>> definitionsByName;
         private readonly HashSet<string> alsoInScopeNames;
+        private readonly HashSet<string> privateInScopeNames;
 
         private LocalFunctionScope(
             Dictionary<string, List<FunctionDefinitionAst>> definitionsByName,
-            HashSet<string> alsoInScopeNames)
+            HashSet<string> alsoInScopeNames,
+            HashSet<string> privateInScopeNames)
         {
             this.definitionsByName = definitionsByName;
             this.alsoInScopeNames = alsoInScopeNames;
+            this.privateInScopeNames = privateInScopeNames;
         }
 
         internal static LocalFunctionScope FromAst(Ast ast) => FromAst(ast, null);
@@ -41,43 +44,75 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
                         continue;
                     }
 
-                    if (!definitionsByName.TryGetValue(function.Name, out var definitions))
+                    string name = Helper.Instance.FunctionNameWithoutScope(function.Name);
+                    if (!definitionsByName.TryGetValue(name, out var definitions))
                     {
                         definitions = new List<FunctionDefinitionAst>();
-                        definitionsByName[function.Name] = definitions;
+                        definitionsByName[name] = definitions;
                     }
                     definitions.Add(function);
                 }
             }
 
             var alsoInScopeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var privateInScopeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (alsoInScope != null)
             {
-                alsoInScopeNames.UnionWith(alsoInScope);
+                foreach (string name in alsoInScope)
+                {
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        var names = name.StartsWith("private:", StringComparison.OrdinalIgnoreCase)
+                            ? privateInScopeNames : alsoInScopeNames;
+                        names.Add(Helper.Instance.FunctionNameWithoutScope(name));
+                    }
+                }
             }
-            return new LocalFunctionScope(definitionsByName, alsoInScopeNames);
+            return new LocalFunctionScope(definitionsByName, alsoInScopeNames, privateInScopeNames);
         }
 
         /// <summary>
-        /// Returns the containing function of <paramref name="function"/>, or null if it is defined at the
-        /// top level of the file. A function nested inside another is only in scope for calls made from
-        /// within that containing function's body, not for the whole file.
+        /// Returns the enclosing function or directly invoked child script block, or null for file scope.
+        /// Dot-sourced blocks execute in the caller's scope rather than introducing a child scope.
         /// </summary>
-        private static Ast GetContainingFunction(FunctionDefinitionAst function)
+        private static Ast GetContainingScope(Ast node)
         {
-            for (Ast parent = function.Parent; parent != null; parent = parent.Parent)
+            for (Ast parent = node.Parent; parent != null; parent = parent.Parent)
             {
                 if (parent is FunctionDefinitionAst enclosingFunction)
                 {
                     return enclosingFunction;
                 }
+                if (parent is ScriptBlockAst block && block.Parent is ScriptBlockExpressionAst expression
+                    && expression.Parent is CommandAst invocation && invocation.InvocationOperator == TokenKind.Ampersand
+                    && ReferenceEquals(invocation.CommandElements[0], expression))
+                {
+                    return block;
+                }
             }
             return null;
         }
 
+        private static bool HasScriptWideScope(FunctionDefinitionAst function) =>
+            function.Name.StartsWith("script:", StringComparison.OrdinalIgnoreCase)
+            || function.Name.StartsWith("global:", StringComparison.OrdinalIgnoreCase);
+
+        // Dot-source groups must not flatten local/private definitions inside child scopes.
+        internal static bool IsVisibleAcrossFiles(FunctionDefinitionAst function) =>
+            HasScriptWideScope(function) || GetContainingScope(function) == null;
+
         private static bool IsVisibleTo(FunctionDefinitionAst function, Ast callSite)
         {
-            Ast container = GetContainingFunction(function);
+            if (HasScriptWideScope(function))
+            {
+                return true;
+            }
+
+            Ast container = GetContainingScope(function);
+            if (function.Name.StartsWith("private:", StringComparison.OrdinalIgnoreCase))
+            {
+                return ReferenceEquals(container, GetContainingScope(callSite));
+            }
             if (container == null)
             {
                 // Defined at the top level of the file: visible everywhere in it.
@@ -102,6 +137,12 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
             }
 
             if (alsoInScopeNames.Contains(commandName))
+            {
+                return true;
+            }
+
+            if (privateInScopeNames.Contains(commandName)
+                && (callSite == null || GetContainingScope(callSite) == null))
             {
                 return true;
             }
