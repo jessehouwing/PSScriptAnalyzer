@@ -1198,8 +1198,12 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
                 ruleSuppressionList.AddRange(RuleSuppression.GetSuppressions(sbAst.ParamBlock.Attributes, sbAst.Extent.StartOffset, sbAst.Extent.EndOffset, sbAst));
             }
 
+            // Walk the tree once, retaining the existing function/class/configuration processing order.
+            var declarationAsts = ast.FindAll(item => item is FunctionDefinitionAst
+                || item is TypeDefinitionAst || item is ConfigurationDefinitionAst, true).ToArray();
+
             // Get rule suppression from functions
-            IEnumerable<FunctionDefinitionAst> funcAsts = ast.FindAll(item => item is FunctionDefinitionAst, true).Cast<FunctionDefinitionAst>();
+            IEnumerable<FunctionDefinitionAst> funcAsts = declarationAsts.OfType<FunctionDefinitionAst>();
 
             foreach (var funcAst in funcAsts)
             {
@@ -1207,7 +1211,7 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
             }
 
             // Get rule suppression from classes
-            IEnumerable<TypeDefinitionAst> typeAsts = ast.FindAll(item => item is TypeDefinitionAst, true).Cast<TypeDefinitionAst>();
+            IEnumerable<TypeDefinitionAst> typeAsts = declarationAsts.OfType<TypeDefinitionAst>();
 
             foreach (var typeAst in typeAsts)
             {
@@ -1215,7 +1219,7 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
             }
 
             // Get rule suppression from configuration definitions
-            IEnumerable<ConfigurationDefinitionAst> configDefAsts = ast.FindAll(item => item is ConfigurationDefinitionAst, true).Cast<ConfigurationDefinitionAst>();
+            IEnumerable<ConfigurationDefinitionAst> configDefAsts = declarationAsts.OfType<ConfigurationDefinitionAst>();
 
             foreach (var configDefAst in configDefAsts)
             {
