@@ -92,6 +92,11 @@ Get-ChildItem -PATH 'outside'
         Invoke-ScriptAnalyzer -ScriptDefinition $definition -Settings $casingSettings | Should -BeNullOrEmpty
     }
 
+    It 'keeps an ampersand command argument block in the caller scope' {
+        $definition = "function private:Get-ChildItem { param(`$PATH) }`n1 | & ForEach-Object { Get-ChildItem -PATH 'same' }"
+        Invoke-ScriptAnalyzer -ScriptDefinition $definition -Settings $casingSettings | Should -BeNullOrEmpty
+    }
+
     It 'still validates a module-qualified cmdlet despite a scoped local declaration' {
         $definition = "function script:Get-ChildItem { param(`$PATH) }`nMicrosoft.PowerShell.Management\Get-ChildItem -PATH 'x'"
         $diagnostics = @(Invoke-ScriptAnalyzer -ScriptDefinition $definition -Settings $casingSettings)

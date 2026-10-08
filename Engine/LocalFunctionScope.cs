@@ -84,7 +84,8 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
                     return enclosingFunction;
                 }
                 if (parent is ScriptBlockAst block && block.Parent is ScriptBlockExpressionAst expression
-                    && expression.Parent is CommandAst invocation && invocation.InvocationOperator == TokenKind.Ampersand)
+                    && expression.Parent is CommandAst invocation && invocation.InvocationOperator == TokenKind.Ampersand
+                    && ReferenceEquals(invocation.CommandElements[0], expression))
                 {
                     return block;
                 }

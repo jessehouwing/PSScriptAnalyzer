@@ -40,6 +40,11 @@ Describe 'Scoped declarations in dot-sourced groups' {
         $diagnostics[0].ScriptPath | Should -BeExactly (Join-Path $root 'Caller.ps1')
     }
 
+    It 'shares declarations made by an ampersand command argument block in the caller scope' {
+        $root = NewScopedWorkload '1 | & ForEach-Object { function Get-ChildItem { param($PATH) } }' "Get-ChildItem -PATH 'x'"
+        Invoke-ScriptAnalyzer -Path $root -Recurse -Settings $casingSettings | Should -BeNullOrEmpty
+    }
+
     It 'shares a nested <Scope> declaration with the dot-source group' -TestCases @(
         @{ Scope = 'script' }, @{ Scope = 'global' }
     ) {
