@@ -121,7 +121,7 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer
 
                 foreach (FunctionDefinitionAst function in ast.FindAll(node => node is FunctionDefinitionAst, true))
                 {
-                    if (!string.IsNullOrWhiteSpace(function.Name))
+                    if (!string.IsNullOrWhiteSpace(function.Name) && LocalFunctionScope.IsVisibleAcrossFiles(function))
                     {
                         functions.Add(function.Name);
                     }
