@@ -292,14 +292,24 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
         /// Checks if the given command supports ShouldProcess
         /// </summary>
         /// <returns>False if input is null. If the input command has declares SupportsShouldProcess attribute, returns true</returns>
-        private bool SupportsShouldProcess(string cmdName)
+        private bool SupportsShouldProcess(string cmdName, IEnumerable<Ast> callSites)
         {
             if (String.IsNullOrWhiteSpace(cmdName))
             {
                 return false;
             }
 
-            CommandInfo cmdInfo = Helper.Instance.GetCommandInfo(cmdName);
+            // Credit the name if any invocation of it resolves to a real command rather than a function
+            // that is only in scope elsewhere.
+            CommandInfo cmdInfo = null;
+            foreach (Ast callSite in callSites)
+            {
+                cmdInfo = Helper.Instance.GetCommandInfo(cmdName, callSite: callSite);
+                if (cmdInfo != null)
+                {
+                    break;
+                }
+            }
             if (cmdInfo == null)
             {
                 return false;
@@ -410,7 +420,7 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
                 if (funcDigraph.GetOutDegree(v) == 0)
                 {
                     // Member vertices carry a method name, which PowerShell never resolves as a command.
-                    if (v.IsCommand && SupportsShouldProcess(v.Name))
+                    if (v.IsCommand && SupportsShouldProcess(v.Name, v.CallSites))
                     {
                         commandsWithSupportShouldProcess.Add(v);
                     }
@@ -450,6 +460,9 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
 
         /// <summary>True when the vertex was reached through an actual command invocation.</summary>
         public bool IsCommand { get; set; }
+
+        /// <summary>Every command invocation merged into this name-keyed vertex.</summary>
+        public List<Ast> CallSites { get; } = new List<Ast>();
 
         private string name;
         private Ast ast;
@@ -572,6 +585,7 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
                     // Vertices are keyed on name alone, so a name used both as a command and as a
                     // member must stay marked as a command however the two are ordered.
                     v.IsCommand |= vertex.IsCommand;
+                    v.CallSites.AddRange(vertex.CallSites);
                     if (vertex.Ast != null
                         && vertex.Ast is FunctionDefinitionAst)
                     {
@@ -635,6 +649,7 @@ namespace Microsoft.Windows.PowerShell.ScriptAnalyzer.BuiltinRules
             }
 
             var vertex = new Vertex (cmdName, ast) { IsCommand = true };
+            vertex.CallSites.Add(ast);
             AddVertex(vertex);
             if (IsWithinFunctionDefinition())
             {

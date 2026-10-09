@@ -280,6 +280,37 @@ function Foo
         }
     }
 
+    Context "Nested function definitions only shadow commands within their own scope" {
+        It "credits a call to the real command when a nested function elsewhere shares its name" {
+            $scriptDef = @'
+function Outer
+{
+    function Remove-Item { param($path) }
+}
+function Invoke-Thing
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($path)
+    Remove-Item $path
+}
+'@
+            Invoke-ScriptAnalyzer -ScriptDefinition $scriptDef -IncludeRule PSShouldProcess | Should -BeNullOrEmpty
+        }
+
+        It "does not credit a call that resolves to a nested function inside its own scope" {
+            $scriptDef = @'
+function Invoke-Thing
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    param($path)
+    function Remove-Item { param($path) }
+    Remove-Item $path
+}
+'@
+            @(Invoke-ScriptAnalyzer -ScriptDefinition $scriptDef -IncludeRule PSShouldProcess).Count | Should -Be 1
+        }
+    }
+
     Context "Method calls are not command calls" {
         # A quoted member name may contain a hyphen, so Remove-Item serves as a member whose name also
         # belongs to a cmdlet that declares SupportsShouldProcess on every platform.
